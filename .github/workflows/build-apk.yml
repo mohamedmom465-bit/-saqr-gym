@@ -1,3 +1,42 @@
+name: Build SAQR GYM APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: إنشاء فولدرات المنصات
+        run: flutter create --platforms=android .
+
+      - name: تنزيل المكتبات
+        run: flutter pub get
+
+      - name: إضافة صلاحيات الكاميرا
+        run: |
+          python3 - <<'PY'
+          p = 'android/app/src/main/AndroidManifest.xml'
+          s = open(p, encoding='utf-8').read()
+          perms = '<uses-permission android:name="android.permission.CAMERA"/>\n    <uses-permission android:name="android.permission.WAKE_LOCK"/>\n'
+          if 'android.permission.CAMERA' not in s:
+              s = s.replace('<application', perms + '    <application', 1)
+              open(p, 'w', encoding='utf-8').write(s)
+          PY
+
       - name: رفع إصدار الـ SDK لـ 36
         run: |
           python3 - <<'PY'
@@ -8,11 +47,8 @@
               s = open(p, encoding='utf-8').read()
               orig = s
 
-              # صيغة Kotlin DSL: compileSdk = flutter.compileSdkVersion
               s = re.sub(r'compileSdk\s*=\s*flutter\.compileSdkVersion', 'compileSdk = 36', s)
               s = re.sub(r'targetSdk\s*=\s*flutter\.targetSdkVersion', 'targetSdk = 36', s)
-
-              # صيغة Groovy: compileSdk flutter.compileSdkVersion (من غير =)
               s = re.sub(r'compileSdk\s+flutter\.compileSdkVersion', 'compileSdk 36', s)
               s = re.sub(r'targetSdk\s+flutter\.targetSdkVersion', 'targetSdk 36', s)
               s = re.sub(r'compileSdkVersion\s+flutter\.compileSdkVersion', 'compileSdkVersion 36', s)
@@ -20,37 +56,51 @@
 
               if s != orig:
                   open(p, 'w', encoding='utf-8').write(s)
-                  print(f'تم تعديل: {p}')
+                  print('تم تعديل:', p)
               else:
-                  print(f'مفيش تعديل لازم في: {p}')
-
-          for p in candidates:
-              print('---', p, '---')
-              print(open(p, encoding='utf-8').read())
+                  print('مفيش تعديل لازم في:', p)
           PY
 
       - name: فرض السدك 36 على كل المكتبات (احتياطي)
         run: |
           python3 - <<'PY'
-          p = 'android/build.gradle.kts'
           import os
+
+          p = 'android/build.gradle.kts'
           if not os.path.exists(p):
               p = 'android/build.gradle'
+
+          extra_lines = [
+              "",
+              "subprojects {",
+              "    afterEvaluate { project ->",
+              "        if (project.hasProperty(\"android\")) {",
+              "            project.android {",
+              "                compileSdkVersion 36",
+              "            }",
+              "        }",
+              "    }",
+              "}",
+              "",
+          ]
+          extra = "\n".join(extra_lines)
+
           if os.path.exists(p):
               s = open(p, encoding='utf-8').read()
-              extra = '''
-subprojects {
-    afterEvaluate { project ->
-        if (project.hasProperty("android")) {
-            project.android {
-                compileSdkVersion 36
-            }
-        }
-    }
-}
-'''
               if 'compileSdkVersion 36' not in s:
                   s += extra
                   open(p, 'w', encoding='utf-8').write(s)
-                  print('تمت إضافة الإجبار على المستوى الأعلى')
+                  print('تمت الإضافة في', p)
+              else:
+                  print('موجود بالفعل في', p)
+          else:
+              print('الملف مش موجود:', p)
           PY
+
+      - name: بناء الـ APK
+        run: flutter build apk --release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: saqr-gym-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
