@@ -1,106 +1,50 @@
-name: Build SAQR GYM APK
-
-on:
-  workflow_dispatch:
-  push:
-    branches: [ main, master ]
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-java@v4
-        with:
-          distribution: 'zulu'
-          java-version: '17'
-
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: 'stable'
-
-      - name: إنشاء فولدرات المنصات
-        run: flutter create --platforms=android .
-
-      - name: تنزيل المكتبات
-        run: flutter pub get
-
-      - name: إضافة صلاحيات الكاميرا
-        run: |
-          python3 - <<'PY'
-          p = 'android/app/src/main/AndroidManifest.xml'
-          s = open(p, encoding='utf-8').read()
-          perms = '<uses-permission android:name="android.permission.CAMERA"/>\n    <uses-permission android:name="android.permission.WAKE_LOCK"/>\n'
-          if 'android.permission.CAMERA' not in s:
-              s = s.replace('<application', perms + '    <application', 1)
-              open(p, 'w', encoding='utf-8').write(s)
-          PY
-
-      - name: رفع إصدار الـ SDK لـ 36
-        run: |
-          python3 - <<'PY'
-          import re, glob
-
-          candidates = glob.glob('android/app/build.gradle.kts') + glob.glob('android/app/build.gradle')
-          for p in candidates:
-              s = open(p, encoding='utf-8').read()
-              orig = s
-
-              s = re.sub(r'compileSdk\s*=\s*flutter\.compileSdkVersion', 'compileSdk = 36', s)
-              s = re.sub(r'targetSdk\s*=\s*flutter\.targetSdkVersion', 'targetSdk = 36', s)
-              s = re.sub(r'compileSdk\s+flutter\.compileSdkVersion', 'compileSdk 36', s)
-              s = re.sub(r'targetSdk\s+flutter\.targetSdkVersion', 'targetSdk 36', s)
-              s = re.sub(r'compileSdkVersion\s+flutter\.compileSdkVersion', 'compileSdkVersion 36', s)
-              s = re.sub(r'targetSdkVersion\s+flutter\.targetSdkVersion', 'targetSdkVersion 36', s)
-
-              if s != orig:
-                  open(p, 'w', encoding='utf-8').write(s)
-                  print('تم تعديل:', p)
-              else:
-                  print('مفيش تعديل لازم في:', p)
-          PY
-
       - name: فرض السدك 36 على كل المكتبات (احتياطي)
         run: |
           python3 - <<'PY'
           import os
 
-          p = 'android/build.gradle.kts'
-          if not os.path.exists(p):
-              p = 'android/build.gradle'
+          kts_path = 'android/build.gradle.kts'
+          groovy_path = 'android/build.gradle'
 
-          extra_lines = [
-              "",
-              "subprojects {",
-              "    afterEvaluate { project ->",
-              "        if (project.hasProperty(\"android\")) {",
-              "            project.android {",
-              "                compileSdkVersion 36",
-              "            }",
-              "        }",
-              "    }",
-              "}",
-              "",
-          ]
-          extra = "\n".join(extra_lines)
+          if os.path.exists(kts_path):
+              p = kts_path
+              extra = """
+allprojects {
+    afterEvaluate {
+        if (project.hasProperty("android")) {
+            val ext = project.extensions.findByName("android")
+            if (ext != null) {
+                val method = ext.javaClass.getMethod("setCompileSdkVersion", Int::class.javaPrimitiveType)
+                method.invoke(ext, 36)
+            }
+        }
+    }
+}
+"""
+          elif os.path.exists(groovy_path):
+              p = groovy_path
+              extra = """
+subprojects {
+    afterEvaluate { project ->
+        if (project.hasProperty("android")) {
+            project.android {
+                compileSdkVersion 36
+            }
+        }
+    }
+}
+"""
+          else:
+              p = None
 
-          if os.path.exists(p):
+          if p:
               s = open(p, encoding='utf-8').read()
-              if 'compileSdkVersion 36' not in s:
+              if 'compileSdkVersion' not in s and 'setCompileSdkVersion' not in s:
                   s += extra
                   open(p, 'w', encoding='utf-8').write(s)
                   print('تمت الإضافة في', p)
               else:
                   print('موجود بالفعل في', p)
           else:
-              print('الملف مش موجود:', p)
+              print('مفيش ملف android/build.gradle موجود')
           PY
-
-      - name: بناء الـ APK
-        run: flutter build apk --release
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: saqr-gym-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
